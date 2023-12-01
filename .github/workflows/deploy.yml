@@ -1,0 +1,91 @@
+name: Build and Deploy
+
+on:
+  workflow_dispatch:
+  #push:
+  #branches:
+  #- main
+  #Note: By default, a workflow only runs when a pull_request's activity type is opened, synchronize, or reopened.
+  #pull_request:
+
+env:
+  AWS_REGION: us-west-1
+  ENV: staging
+  AWS_ROLE: #arn:aws:iam::813045745351:role/GithubActionsRole
+
+jobs:
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.21.0" # The Go version to download (if necessary) and use.
+
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Build zip files
+        run: make compile
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: portfolio-bin-${{ github.sha }}
+          path: bin
+          retention-days: 1
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: Dev
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Download bin folder of build step
+        uses: actions/download-artifact@v3
+        with:
+          name: portfolio-bin-${{ github.sha }}
+          path: bin
+
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - name: Assume Deployment Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          aws-region: us-west-1
+
+      - name: Split branch name
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        id: split
+        run: |
+          echo "extracting branch name from $BRANCH"
+          echo "setting branch to ${BRANCH##*/}"
+          echo "branch=${BRANCH##*/}" >> $GITHUB_OUTPUT
+
+      - name: Deploy terraform
+        working-directory: terraform
+        run: |
+          terraform init -backend-config="key=portfolio-api/${{ steps.split.outputs.branch }}/terraform.tfstate"
+          terraform apply -auto-approve -var="branch=${{ steps.split.outputs.branch }}" -var="needsZip=true"
+
+  clear_artifacts:
+    if: always()
+    needs: ["build", "deploy"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: geekyeggo/delete-artifact@v2
+        with:
+          name: portfolio-bin-${{ github.sha }}
