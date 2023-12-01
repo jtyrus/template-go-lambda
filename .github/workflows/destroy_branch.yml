@@ -1,0 +1,45 @@
+name: Destroy Resources
+
+on:
+  workflow_dispatch:
+#pull_request:
+#types:
+#  - closed
+
+env:
+  AWS_REGION: us-west-1
+  ENV: staging
+  AWS_ROLE: #arn:aws:iam::813045745351:role/GithubActionsRole
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment: Dev
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Assume Deployment Role
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: role-to-assume: ${{ env.AWS_ROLE }}
+          aws-region: us-west-1
+
+      - name: Split branch name
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        id: split
+        run: |
+          echo "extracting branch name from $BRANCH"
+          echo "setting branch to ${BRANCH##*/}"
+          echo "branch=${BRANCH##*/}" >> $GITHUB_OUTPUT
+
+      - name: Destroy terraform
+        working-directory: terraform
+        run: |
+          terraform init -backend-config="key=portfolio-api/${{ steps.split.outputs.branch }}/terraform.tfstate"
+          terraform destroy -auto-approve -var="branch=${{ steps.split.outputs.branch }}" -var="needsZip=false"
